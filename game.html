@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sunset Courier — a tiny 3D game built from one prompt</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #1a0b2e;
+    font-family: "Trebuchet MS", Verdana, sans-serif; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+  .hud { position: absolute; left: 0; right: 0; top: 0; display: flex; justify-content: space-between;
+    align-items: flex-start; padding: 18px 22px 0; pointer-events: none; color: #fff;
+    text-shadow: 0 2px 8px rgba(0,0,0,.65); z-index: 5; }
+  .hud .title { font-size: 30px; font-weight: 900; letter-spacing: 3px; color: #ffd166; line-height: 1; }
+  .hud .subtitle { font-size: 14px; letter-spacing: 2px; color: #ffe9c9; margin-top: 4px; white-space: nowrap; }
+  .hud .stats { text-align: right; font-size: 20px; font-weight: 700; line-height: 1.35; white-space: nowrap; }
+  .hud .stats b { color: #ffd166; }
+  .lives { font-size: 24px; letter-spacing: 4px; }
+  #banner { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); z-index: 6;
+    text-align: center; color: #fff; pointer-events: none; width: 92%;
+    text-shadow: 0 3px 14px rgba(0,0,0,.7); }
+  #banner h1 { font-size: 56px; margin: 0; letter-spacing: 4px; color: #ffd166; }
+  #banner p { font-size: 22px; margin: 10px 0 0; font-weight: 700; }
+  #banner .keys { font-size: 17px; margin-top: 14px; color: #ffe9c9; }
+  #toast { position: absolute; left: 50%; top: 46%; transform: translate(-50%,-50%); z-index: 6;
+    font-size: 44px; font-weight: 900; color: #fff; text-shadow: 0 3px 16px rgba(0,0,0,.8);
+    opacity: 0; transition: opacity .25s; pointer-events: none; letter-spacing: 2px; }
+  #footer { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; padding: 0 22px 20px;
+    display: flex; justify-content: space-between; align-items: flex-end; pointer-events: none;
+    color: #ffe9c9; text-shadow: 0 2px 8px rgba(0,0,0,.7); font-size: 15px; font-weight: 700; }
+  #footer .combo { font-size: 22px; color: #ffd166; }
+  #footer .credit { white-space: nowrap; }
+  @media (max-width: 640px) {
+    .hud .title { font-size: 22px; }
+    .hud .subtitle { font-size: 11px; }
+    .hud .stats { font-size: 15px; }
+    #banner h1 { font-size: 40px; }
+    #banner p { font-size: 18px; }
+    #toast { font-size: 30px; }
+    #footer { font-size: 12px; }
+    #footer .combo { font-size: 17px; }
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="hud">
+  <div>
+    <div class="title">SUNSET COURIER</div>
+    <div class="subtitle">ONE PROMPT &middot; ONE GAME &middot; MAKE.FUN</div>
+  </div>
+  <div class="stats">
+    <div>SCORE <b id="score">0</b></div>
+    <div>PARCELS <b id="parcels">0</b></div>
+    <div><span id="dist">0</span> m &middot; <span id="speed">0</span> km/h</div>
+    <div class="lives" id="lives">&#10084;&#10084;&#10084;</div>
+  </div>
+</div>
+<div id="banner">
+  <h1>SUNSET COURIER</h1>
+  <p id="bannerText">Press ENTER or tap to ride</p>
+  <div class="keys">&#8592; &#8593; &#8595; &#8594; / WASD steer &nbsp;&middot;&nbsp; SPACE jump &nbsp;&middot;&nbsp; R restart</div>
+</div>
+<div id="toast"></div>
+<div id="footer">
+  <div class="combo" id="combo"></div>
+  <div class="credit">Built from ONE prompt</div>
+</div>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+// ---------------------------------------------------------------------------
+// Sunset Courier — a tiny 3D courier runner built from ONE prompt:
+// "a courier on a glowing hover-scooter races down a neon sunset boulevard,
+// steering between traffic barriers, collecting golden parcels."
+// ---------------------------------------------------------------------------
+
+const params = new URLSearchParams(location.search);
+const AUTO = params.get('auto') === '1';
+const SEED = parseInt(params.get('seed') || '7', 10);
+let seedState = SEED >>> 0;
+function rand() { // mulberry32 — deterministic when ?seed= is given
+  seedState |= 0; seedState = (seedState + 0x6D2B79F5) | 0;
+  let t = Math.imul(seedState ^ (seedState >>> 15), 1 | seedState);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+const LANES = [-2.4, 0, 2.4];
+const ROAD_HALF = 4.6;
+const VIEW_DIST = 90;
+
+const NOSHADOW = params.get('noshadow') === '1';
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = !NOSHADOW;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x2a1040);
+scene.fog = new THREE.Fog(0x3a1650, 30, 95);
+
+const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 220);
+camera.position.set(0, 5.4, 8.5);
+
+// --- lights: warm low sun + soft sky fill -------------------------------
+const sun = new THREE.DirectionalLight(0xffb347, 2.6);
+sun.position.set(-14, 18, -30);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.left = -18; sun.shadow.camera.right = 18;
+sun.shadow.camera.top = 24; sun.shadow.camera.bottom = -30;
+sun.shadow.camera.far = 120;
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xffd9a0, 0x5a2f68, 1.6));
+const rim = new THREE.DirectionalLight(0xff6ec7, 0.7);
+rim.position.set(10, 8, 12);
+scene.add(rim);
+
+// --- the big low sun + glow ---------------------------------------------
+const sunDisc = new THREE.Mesh(
+  new THREE.CircleGeometry(11, 48),
+  new THREE.MeshBasicMaterial({ color: 0xffd166, fog: false })
+);
+sunDisc.position.set(-11, 16, -95);
+scene.add(sunDisc);
+const sunGlow = new THREE.Mesh(
+  new THREE.CircleGeometry(15, 48),
+  new THREE.MeshBasicMaterial({ color: 0xff7e5f, transparent: true, opacity: 0.35, fog: false })
+);
+sunGlow.position.set(-16, 13, -96);
+scene.add(sunGlow);
+
+// --- materials -----------------------------------------------------------
+const MAT = {
+  road: new THREE.MeshStandardMaterial({ color: 0x5b4c66, roughness: 0.9 }),
+  line: new THREE.MeshBasicMaterial({ color: 0xffe9a8 }),
+  walk: new THREE.MeshStandardMaterial({ color: 0x6b5a72, roughness: 1 }),
+  building: new THREE.MeshStandardMaterial({ color: 0x4a2d5e, roughness: 0.85 }),
+  glass: new THREE.MeshStandardMaterial({ color: 0xffc978, emissive: 0xff9d2e, emissiveIntensity: 0.9 }),
+  palm: new THREE.MeshStandardMaterial({ color: 0x7a5230, roughness: 1 }),
+  frond: new THREE.MeshStandardMaterial({ color: 0x2fa36b, roughness: 0.9 }),
+  barrier: new THREE.MeshStandardMaterial({ color: 0xe23b3b, roughness: 0.6 }),
+  stripe: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 }),
+  parcel: new THREE.MeshStandardMaterial({ color: 0xffc21c, emissive: 0xff9d00, emissiveIntensity: 0.85, roughness: 0.35, metalness: 0.4 }),
+  scooter: new THREE.MeshStandardMaterial({ color: 0x19c2d8, roughness: 0.3, metalness: 0.55 }),
+  scooterDark: new THREE.MeshStandardMaterial({ color: 0x12333f, roughness: 0.5, metalness: 0.4 }),
+  jacket: new THREE.MeshStandardMaterial({ color: 0x0fb5a6, roughness: 0.7 }),
+  skin: new THREE.MeshStandardMaterial({ color: 0xf2c89b, roughness: 0.7 }),
+  helmet: new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.25, metalness: 0.2 }),
+  visor: new THREE.MeshStandardMaterial({ color: 0x1b2a4a, roughness: 0.1, metalness: 0.7 }),
+  neon: new THREE.MeshBasicMaterial({ color: 0x36f5d0 }),
+  neonPink: new THREE.MeshBasicMaterial({ color: 0xff5fa2 }),
+};
+
+// --- window texture for buildings (canvas-drawn, warm lit windows) -------
+function windowTexture() {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#3a2350'; g.fillRect(0, 0, 64, 128);
+  for (let y = 8; y < 120; y += 16) for (let x = 8; x < 56; x += 14) {
+    g.fillStyle = rand() < 0.55 ? '#ffd27a' : '#2a1a3e';
+    g.fillRect(x, y, 9, 10);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const winTex = windowTexture();
+
+// --- road, sidewalks, lamps ----------------------------------------------
+const road = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_HALF * 2, VIEW_DIST + 40), MAT.road);
+road.rotation.x = -Math.PI / 2; road.position.set(0, 0, -VIEW_DIST / 2 + 10);
+road.receiveShadow = true;
+scene.add(road);
+for (const s of [-1, 1]) {
+  const walk = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.3, VIEW_DIST + 40), MAT.walk);
+  walk.position.set(s * (ROAD_HALF + 1.7), 0.15, -VIEW_DIST / 2 + 10);
+  walk.receiveShadow = true;
+  scene.add(walk);
+  // lane dashes
+  for (let z = 8; z > -VIEW_DIST; z -= 6) {
+    const dash = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.02, 2.4), MAT.line);
+    dash.position.set(s * 1.2, 0.02, z);
+    scene.add(dash);
+  }
+}
+
+// --- buildings + palms + lamps (recycled as the world scrolls) -----------
+const buildings = [];
+function makeBuilding(side, z) {
+  const h = 7 + rand() * 14, w = 5 + rand() * 4, d = 5 + rand() * 3;
+  const m = new THREE.MeshStandardMaterial({ map: winTex, color: 0xffffff, roughness: 0.85 });
+  const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+  b.position.set(side * (ROAD_HALF + 4.6 + rand() * 1.2), h / 2, z);
+  b.castShadow = false; b.receiveShadow = true;
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.25, d + 0.3),
+    new THREE.MeshStandardMaterial({ color: 0xff5fa2, emissive: 0xff2e88, emissiveIntensity: 0.55 }));
+  roof.position.set(b.position.x, h + 0.12, z);
+  const grp = new THREE.Group(); grp.add(b, roof);
+  scene.add(grp);
+  return { grp, z, h };
+}
+for (let z = 6; z > -VIEW_DIST; z -= 9) {
+  buildings.push(makeBuilding(-1, z - rand() * 4), makeBuilding(1, z - rand() * 4));
+}
+const palms = [];
+function makePalm(side, z) {
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, 3.4, 7), MAT.palm);
+  trunk.position.y = 1.7; trunk.castShadow = true; g.add(trunk);
+  for (let i = 0; i < 6; i++) {
+    const f = new THREE.Mesh(new THREE.ConeGeometry(0.32, 2.2, 5), MAT.frond);
+    const a = (i / 6) * Math.PI * 2;
+    f.position.set(Math.cos(a) * 0.9, 3.6, Math.sin(a) * 0.9);
+    f.rotation.z = Math.cos(a) * 1.1; f.rotation.x = -Math.sin(a) * 1.1;
+    g.add(f);
+  }
+  g.position.set(side * (ROAD_HALF + 1.1), 0.3, z);
+  scene.add(g);
+  return { g, z };
+}
+for (let z = 2; z > -VIEW_DIST; z -= 12) palms.push(makePalm(-1, z), makePalm(1, z - 6));
+
+// --- the courier: hover-scooter + rider -----------------------------------
+const player = new THREE.Group();
+const scooter = new THREE.Group();
+const deck = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.14, 1.9), MAT.scooter);
+deck.position.y = 0.42; deck.castShadow = true; scooter.add(deck);
+const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.5, 12), MAT.scooterDark);
+nose.rotation.x = Math.PI / 2; nose.position.set(0, 0.42, -1.0); scooter.add(nose);
+const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.0, 8), MAT.scooterDark);
+stem.position.set(0, 0.95, -0.95); stem.rotation.x = 0.25; scooter.add(stem);
+const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.62, 8), MAT.scooterDark);
+grip.rotation.z = Math.PI / 2; grip.position.set(0, 1.42, -1.08); scooter.add(grip);
+const glowBar = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.06, 1.9), MAT.neon);
+glowBar.position.y = 0.3; scooter.add(glowBar);
+const wheelF = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.09, 10, 18), MAT.scooterDark);
+wheelF.rotation.y = Math.PI / 2; wheelF.position.set(0, 0.26, -1.05); scooter.add(wheelF);
+const wheelB = wheelF.clone(); wheelB.position.z = 1.0; scooter.add(wheelB);
+player.add(scooter);
+
+const rider = new THREE.Group();
+const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.55, 6, 12), MAT.jacket);
+body.position.y = 1.25; body.castShadow = true; rider.add(body);
+const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.3, 18, 14), MAT.helmet);
+helmet.position.y = 1.95; helmet.castShadow = true; rider.add(helmet);
+const visor = new THREE.Mesh(new THREE.SphereGeometry(0.24, 18, 12, -0.9, 1.8, 0.9, 1.1), MAT.visor);
+visor.position.set(0, 1.95, -0.08); rider.add(visor);
+const armL = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.5, 4, 8), MAT.jacket);
+armL.position.set(-0.32, 1.45, -0.35); armL.rotation.x = -0.9; rider.add(armL);
+const armR = armL.clone(); armR.position.x = 0.32; rider.add(armR);
+const legL = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.5, 4, 8), MAT.scooterDark);
+legL.position.set(-0.18, 0.85, 0.25); legL.rotation.x = 0.5; rider.add(legL);
+const legR = legL.clone(); legR.position.x = 0.18; rider.add(legR);
+const pack = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 0.24),
+  new THREE.MeshStandardMaterial({ color: 0xffc21c, roughness: 0.5 }));
+pack.position.set(0, 1.35, 0.42); pack.castShadow = true; rider.add(pack);
+player.add(rider);
+scene.add(player);
+
+// --- obstacles: barriers + parcels ----------------------------------------
+const obstacles = [];
+function makeBarrier(lane, z) {
+  const g = new THREE.Group();
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.05, 0.5), MAT.barrier);
+  base.position.y = 0.55; base.castShadow = true; g.add(base);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.94, 0.28, 0.52), MAT.stripe);
+  stripe.position.y = 0.8; g.add(stripe);
+  const leg1 = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.35, 0.7), MAT.scooterDark);
+  leg1.position.set(-0.7, 0.17, 0); g.add(leg1);
+  const leg2 = leg1.clone(); leg2.position.x = 0.7; g.add(leg2);
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), MAT.neonPink);
+  lamp.position.set(0, 1.2, 0); g.add(lamp);
+  g.position.set(LANES[lane], 0, z);
+  scene.add(g);
+  return { g, kind: 'barrier', lane, z, hit: false };
+}
+function makeParcel(lane, z) {
+  const g = new THREE.Group();
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.62, 0.62), MAT.parcel);
+  box.castShadow = true; g.add(box);
+  const band = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.14, 0.66), MAT.neonPink);
+  g.add(band);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.04, 8, 24), MAT.neon);
+  ring.rotation.x = Math.PI / 2; ring.position.y = -0.55; g.add(ring);
+  g.position.set(LANES[lane], 0.95, z);
+  scene.add(g);
+  return { g, kind: 'parcel', lane, z, taken: false, spin: rand() * 6 };
+}
+
+// --- game state ------------------------------------------------------------
+const S = {
+  state: 'menu', // menu | playing | over
+  lane: 1, targetX: 0, x: 0,
+  y: 0, vy: 0, grounded: true,
+  speed: 0, baseSpeed: 15,
+  score: 0, parcels: 0, combo: 0, distance: 0,
+  lives: 3, invuln: 0, shake: 0,
+  spawnZ: -30, nextSpawn: 0, time: 0,
+};
+window.__game = S;
+
+const $ = (id) => document.getElementById(id);
+const toastEl = $('toast');
+let toastTimer = 0;
+function toast(msg, ms = 900) {
+  toastEl.textContent = msg; toastEl.style.opacity = 1;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (toastEl.style.opacity = 0), ms);
+}
+function updateHUD() {
+  $('score').textContent = S.score;
+  $('parcels').textContent = S.parcels;
+  $('dist').textContent = Math.floor(S.distance);
+  $('speed').textContent = Math.round(S.speed * 3.6);
+  $('lives').innerHTML = '&#10084;'.repeat(S.lives) + '&#9825;'.repeat(Math.max(0, 3 - S.lives));
+  $('combo').textContent = S.combo >= 3 ? `COMBO x${S.combo} — ON FIRE` : '';
+}
+
+function reset() {
+  for (const o of obstacles) scene.remove(o.g);
+  obstacles.length = 0;
+  Object.assign(S, { state: 'playing', lane: 1, targetX: 0, x: 0, y: 0, vy: 0,
+    grounded: true, speed: S.baseSpeed, score: 0, parcels: 0, combo: 0,
+    distance: 0, lives: 3, invuln: 0, shake: 0, spawnZ: -30 });
+  $('banner').classList.add('hidden');
+  spawnRow(-25); spawnRow(-45);
+  updateHUD();
+}
+function gameOver() {
+  S.state = 'over'; S.speed = 0;
+  $('banner').classList.remove('hidden');
+  $('bannerText').textContent = `Wipeout! Score ${S.score} — press R to ride again`;
+  updateHUD();
+}
+function spawnRow(z) {
+  const kind = rand();
+  const lanes = [0, 1, 2].sort(() => rand() - 0.5);
+  if (kind < 0.45) {           // parcel row: 1-2 parcels, maybe a barrier elsewhere
+    obstacles.push(makeParcel(lanes[0], z));
+    if (rand() < 0.5) obstacles.push(makeParcel(lanes[1], z - 3));
+    if (rand() < 0.45) obstacles.push(makeBarrier(lanes[2], z - 1));
+  } else if (kind < 0.8) {    // barrier row: one lane always free
+    obstacles.push(makeBarrier(lanes[0], z));
+    if (rand() < 0.55) obstacles.push(makeBarrier(lanes[1], z - 2));
+  } else {                    // parcel line down one lane
+    for (let i = 0; i < 3; i++) obstacles.push(makeParcel(lanes[0], z - i * 3));
+    obstacles.push(makeBarrier(lanes[1], z - 4));
+  }
+}
+
+// --- input -----------------------------------------------------------------
+const keys = new Set();
+addEventListener('keydown', (e) => {
+  if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) e.preventDefault();
+  if (e.repeat) return;
+  keys.add(e.code);
+  if (S.state === 'menu' && (e.code === 'Enter' || e.code === 'Space')) { reset(); return; }
+  if (S.state === 'over' && e.code === 'KeyR') { reset(); return; }
+  if (S.state !== 'playing') return;
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') { S.lane = Math.max(0, S.lane - 1); }
+  if (e.code === 'ArrowRight' || e.code === 'KeyD') { S.lane = Math.min(2, S.lane + 1); }
+  if ((e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') && S.grounded) {
+    S.vy = 8.5; S.grounded = false;
+  }
+});
+addEventListener('keyup', (e) => keys.delete(e.code));
+addEventListener('blur', () => keys.clear());
+renderer.domElement.addEventListener('pointerdown', () => {
+  if (S.state === 'menu') reset();
+  else if (S.state === 'playing' && S.grounded) { S.vy = 8.5; S.grounded = false; }
+});
+
+// --- auto-driver (for the video capture): steer + jump by itself ----------
+function autoDrive() {
+  if (S.state !== 'playing') return;
+  let threat = null, parcel = null;
+  for (const o of obstacles) {
+    if (o.z > -28 && o.z < -2) {
+      if (o.kind === 'barrier' && o.lane === S.lane && (!threat || o.z > threat.z)) threat = o;
+      if (o.kind === 'parcel' && !o.taken && (!parcel || o.z > parcel.z)) parcel = o;
+    }
+  }
+  if (threat) {
+    if (threat.z > -10 && S.grounded) { S.vy = 8.5; S.grounded = false; return; }
+    const free = [0, 1, 2].find((l) => l !== S.lane &&
+      !obstacles.some((o) => o.kind === 'barrier' && o.lane === l && o.z > -26 && o.z < -4));
+    if (free !== undefined) S.lane = free;
+  } else if (parcel && parcel.lane !== S.lane) {
+    const blocked = obstacles.some((o) => o.kind === 'barrier' && o.lane === parcel.lane && o.z > -24 && o.z < -4);
+    if (!blocked) S.lane = parcel.lane;
+  }
+}
+
+// --- main loop ---------------------------------------------------------------
+const clock = new THREE.Clock();
+let hudTick = 0;
+function tick() {
+  requestAnimationFrame(tick);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  S.time += dt;
+  if (S.state === 'playing') {
+    if (AUTO) autoDrive();
+    S.speed = Math.min(32, S.baseSpeed + S.distance / 220);
+    S.distance += S.speed * dt;
+    S.score += Math.floor(S.speed * dt * 2);
+    // lane + jump physics
+    S.targetX = LANES[S.lane];
+    S.x += (S.targetX - S.x) * Math.min(1, dt * 10);
+    if (!S.grounded) {
+      S.vy -= 26 * dt; S.y += S.vy * dt;
+      if (S.y <= 0) { S.y = 0; S.vy = 0; S.grounded = true; }
+    }
+    if (S.invuln > 0) S.invuln -= dt;
+    if (S.shake > 0) S.shake -= dt;
+    // spawn + recycle
+    S.nextSpawn -= S.speed * dt;
+    if (S.nextSpawn <= 0) { spawnRow(S.spawnZ); S.spawnZ -= 20; S.nextSpawn = 20; }
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      const o = obstacles[i];
+      o.z += S.speed * dt;
+      o.g.position.z = o.z;
+      if (o.kind === 'parcel') { o.spin += dt * 3; o.g.rotation.y = o.spin; o.g.position.y = 0.95 + Math.sin(S.time * 3 + o.spin) * 0.12; }
+      if (o.z > 12) { scene.remove(o.g); obstacles.splice(i, 1); continue; }
+      // collisions (player at z=0)
+      if (Math.abs(o.z) < 1.1 && o.lane === S.lane) {
+        if (o.kind === 'parcel' && !o.taken) {
+          o.taken = true; S.parcels++; S.combo++;
+          S.score += 100 + Math.min(200, S.combo * 10);
+          toast(S.combo >= 3 ? `COMBO x${S.combo}! +${100 + Math.min(200, S.combo * 10)}` : `PARCEL! +${100 + Math.min(200, S.combo * 10)}`, 700);
+          scene.remove(o.g); obstacles.splice(i, 1); continue;
+        }
+        if (o.kind === 'barrier' && !o.hit && S.invuln <= 0) {
+          o.hit = true; S.lives--; S.combo = 0; S.invuln = 1.6; S.shake = 0.5;
+          toast(S.lives > 0 ? 'CRASH!' : 'WIPEOUT!', 900);
+          if (S.lives <= 0) { updateHUD(); gameOver(); }
+        }
+      }
+    }
+    // recycle scenery
+    for (const b of buildings) {
+      b.z += S.speed * dt; b.grp.position.z = b.z;
+      if (b.z > 14) { b.z -= VIEW_DIST + 14; b.grp.position.z = b.z; }
+    }
+    for (const p of palms) {
+      p.z += S.speed * dt; p.g.position.z = p.z;
+      if (p.z > 14) { p.z -= VIEW_DIST + 14; p.g.position.z = p.z; }
+    }
+  }
+  // pose the courier
+  player.position.set(S.x, S.y + 0.1 + Math.sin(S.time * 9) * 0.03, 0);
+  player.rotation.z = (S.targetX - S.x) * -0.12;
+  player.rotation.x = S.grounded ? 0 : -0.18;
+  rider.rotation.x = S.grounded ? Math.sin(S.time * 9) * 0.04 : -0.12;
+  scooter.position.y = Math.sin(S.time * 11) * 0.02;
+  // chase camera with a little shake on crash
+  const sh = S.shake > 0 ? (rand() - 0.5) * 0.35 : 0;
+  camera.position.set(S.x * 0.45 + sh, 5.4 + S.y * 0.35, 8.5);
+  camera.lookAt(S.x * 0.7, 1.4, -12);
+  if (++hudTick % 6 === 0) updateHUD();
+  renderer.render(scene, camera);
+}
+tick();
+if (AUTO) setTimeout(reset, 900);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
