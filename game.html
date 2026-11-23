@@ -1164,7 +1164,7 @@ const game = {
   sliding: false, slideTimer: 0,
   speed: 0, distance: 0, score: 0, coins: 0, mult: 1,
   runPhase: 0, time: 0, shake: 0, best: 0,
-  laneChangeT: 0, events: [],
+  laneChangeT: 0, lastSwitchT: -9, events: [],
 };
 function logEvent(type) { game.events.push({ t: +game.time.toFixed(3), type }); }
 try { game.best = parseInt(localStorage.getItem("sunset-courier-best") || "0", 10) || 0; } catch (e) { /* private mode */ }
@@ -1208,13 +1208,24 @@ function coinPop() {
 }
 
 /* ---------------- input ---------------- */
+/* lane-switch debounce: a new switch is ignored while one is still in
+   progress (the runner has not settled in its lane) and for a short
+   cooldown after the last switch. Without this the autopilot re-triggered
+   a switch every frame and the lean animation restarted every frame,
+   leaving the runner tilted and sliding sideways for over a second. */
+const SWITCH_COOLDOWN = 0.25;
+function canSwitch() {
+  if (game.state !== "playing") return false;
+  if (game.time - game.lastSwitchT < SWITCH_COOLDOWN) return false;
+  return Math.abs(game.x - LANE_X[game.lane]) < 0.35;
+}
 function doLeft() {
-  if (game.state !== "playing") return;
-  if (game.lane > 0) { game.lane--; game.laneChangeT = 1; sfx.swoosh(); logEvent("lane"); }
+  if (!canSwitch()) return;
+  if (game.lane > 0) { game.lane--; game.laneChangeT = 1; game.lastSwitchT = game.time; sfx.swoosh(); logEvent("lane"); }
 }
 function doRight() {
-  if (game.state !== "playing") return;
-  if (game.lane < 2) { game.lane++; game.laneChangeT = 1; sfx.swoosh(); logEvent("lane"); }
+  if (!canSwitch()) return;
+  if (game.lane < 2) { game.lane++; game.laneChangeT = 1; game.lastSwitchT = game.time; sfx.swoosh(); logEvent("lane"); }
 }
 function doJump() {
   if (game.state !== "playing") return;
@@ -1275,7 +1286,7 @@ function startGame() {
   Object.assign(game, {
     state: "playing", lane: 1, x: 0, y: 0, vy: 0, grounded: true,
     sliding: false, slideTimer: 0, speed: BASE_SPEED, distance: 0,
-    score: 0, coins: 0, mult: 1, runPhase: 0, time: 0, shake: 0, laneChangeT: 0,
+    score: 0, coins: 0, mult: 1, runPhase: 0, time: 0, shake: 0, laneChangeT: 0, lastSwitchT: -9,
     events: [],
   });
   runner.rotation.set(0, 0, 0);
@@ -1346,8 +1357,13 @@ function autopilot(dt) {
   };
   const blocked = (l) => laneState(l) !== "free";
   const go = (dir) => {
+    /* commit: only switch when settled in the current lane, and only
+       record the dodge when the lane actually changed (the debounce
+       in doLeft/doRight may refuse a switch that comes too soon) */
+    if (Math.abs(game.x - LANE_X[game.lane]) > 0.3) return;
+    const before = game.lane;
     if (dir < 0) doLeft(); else doRight();
-    apDir = dir; apDist = game.distance;
+    if (game.lane !== before) { apDir = dir; apDist = game.distance; }
   };
   /* nearest threat in the player's OWN lane — a nearer obstacle in another
      lane must never mask the train the player is actually running at */
@@ -1429,11 +1445,13 @@ function autopilot(dt) {
   } else if (threat.kind === "barrier") {
     if (dz < 7.5) doJump();
     else {
-      /* early: sidestep only when exactly one side is clearly free */
+      /* early: sidestep only when exactly one side is clearly free —
+         and only when settled, never mid-switch (jump stays live) */
       const leftFree = game.lane > 0 && !blocked(game.lane - 1);
       const rightFree = game.lane < 2 && !blocked(game.lane + 1);
-      if (leftFree && !rightFree) doLeft();
-      else if (rightFree && !leftFree) doRight();
+      const settled = Math.abs(game.x - LANE_X[game.lane]) < 0.3;
+      if (settled && leftFree && !rightFree) doLeft();
+      else if (settled && rightFree && !leftFree) doRight();
     }
   } else if (threat.kind === "bar") {
     if (dz < 8) doSlide();
@@ -1471,7 +1489,10 @@ function animateRunner(dt) {
   const lateralV = (g.x - prevX) / Math.max(dt, 0.001);
   runner.position.x = g.x;
   runner.position.y = g.y;
-  runner.rotation.z = clamp(-lateralV * 0.028, -0.4, 0.4);
+  /* lean into a lane switch: small and Subway-Surfers-like, and it eases
+     back to upright as the switch completes — never a sustained tilt */
+  const leanTarget = clamp(-lateralV * 0.012, -0.22, 0.22);
+  runner.rotation.z = lerp(runner.rotation.z, leanTarget, Math.min(1, dt * 10));
 
   if (g.sliding) {
     /* low crouch-slide: lean back, legs forward */
