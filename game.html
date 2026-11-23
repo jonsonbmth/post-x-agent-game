@@ -706,6 +706,8 @@ const obstacles = []; /* { group, kind, lane, z, len, halfW, hTop, hBot, passed 
 const trainMats = TRAIN_COLORS.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.45, metalness: 0.25 }));
 const trainRoofMat = new THREE.MeshStandardMaterial({ color: 0xd8dde2, roughness: 0.6, metalness: 0.3 });
 const trainDarkMat = new THREE.MeshStandardMaterial({ color: 0x2a2e33, roughness: 0.8 });
+const trainGlassMat = new THREE.MeshStandardMaterial({ color: 0x8fc3e8, metalness: 0.75, roughness: 0.12 });
+const trainAmberMat = new THREE.MeshStandardMaterial({ color: 0xffb020, emissive: 0xff9500, emissiveIntensity: 1.4 });
 
 function makeTrain(len, colorIdx) {
   const g = new THREE.Group();
@@ -721,18 +723,40 @@ function makeTrain(len, colorIdx) {
   roof.position.y = 2.9;
   roof.castShadow = true;
   g.add(roof);
-  /* front cab: sloped nose + windshield */
+  /* front cab: sloped nose + two-pane windshield that fits ON the nose face
+     (the old single slab poked above the nose and read as a black panel) */
   const nose = new THREE.Mesh(boxGeo, bodyMat);
   nose.scale.set(2.0, 1.9, 0.9);
   nose.position.set(0, 1.25, len / 2 + 0.25);
   nose.rotation.x = -0.16;
   nose.castShadow = true;
   g.add(nose);
-  const shield = new THREE.Mesh(boxGeo, M.glass);
-  shield.scale.set(1.6, 0.85, 0.06);
-  shield.position.set(0, 2.15, len / 2 + 0.62);
-  shield.rotation.x = -0.16;
-  g.add(shield);
+  for (const s of [-1, 1]) {
+    const pane = new THREE.Mesh(boxGeo, trainGlassMat);
+    pane.scale.set(0.66, 0.6, 0.06);
+    pane.position.set(s * 0.38, 1.85, len / 2 + 0.66);
+    pane.rotation.x = -0.16;
+    g.add(pane);
+  }
+  const pillar = new THREE.Mesh(boxGeo, bodyMat);
+  pillar.scale.set(0.1, 0.6, 0.07);
+  pillar.position.set(0, 1.85, len / 2 + 0.66);
+  pillar.rotation.x = -0.16;
+  g.add(pillar);
+  /* nose stripe + bumper + destination display */
+  const noseStripe = new THREE.Mesh(boxGeo, M.white);
+  noseStripe.scale.set(2.02, 0.16, 0.06);
+  noseStripe.position.set(0, 1.35, len / 2 + 0.72);
+  noseStripe.rotation.x = -0.16;
+  g.add(noseStripe);
+  const bumper = new THREE.Mesh(boxGeo, trainDarkMat);
+  bumper.scale.set(2.0, 0.26, 0.12);
+  bumper.position.set(0, 0.45, len / 2 + 0.8);
+  g.add(bumper);
+  const dest = new THREE.Mesh(boxGeo, trainAmberMat);
+  dest.scale.set(1.0, 0.22, 0.06);
+  dest.position.set(0, 2.55, len / 2 + 0.05);
+  g.add(dest);
   /* side windows */
   const nWin = Math.max(2, Math.floor(len / 2.4));
   for (let i = 0; i < nWin; i++) {
@@ -751,12 +775,15 @@ function makeTrain(len, colorIdx) {
     stripe.position.set(s * 1.01, 1.15, 0);
     g.add(stripe);
   }
-  /* headlights */
+  /* headlights, proud of the sloped nose face (the old ones sat inside it) */
   for (const s of [-1, 1]) {
-    const light = new THREE.Mesh(new THREE.CircleGeometry(0.16, 12),
-      new THREE.MeshStandardMaterial({ color: 0xfff6c9, emissive: 0xffedb0, emissiveIntensity: 1.6 }));
-    light.position.set(s * 0.6, 0.95, len / 2 + 0.72);
+    const light = new THREE.Mesh(new THREE.CircleGeometry(0.2, 12),
+      new THREE.MeshStandardMaterial({ color: 0xfff6c9, emissive: 0xffedb0, emissiveIntensity: 2.4 }));
+    light.position.set(s * 0.6, 0.95, len / 2 + 0.79);
     g.add(light);
+    const marker = new THREE.Mesh(new THREE.CircleGeometry(0.07, 8), trainAmberMat);
+    marker.position.set(s * 0.6, 1.28, len / 2 + 0.76);
+    g.add(marker);
   }
   /* bogies + roof AC */
   for (const bz of [-len / 2 + 1.6, len / 2 - 1.6]) {
@@ -869,14 +896,29 @@ const pCol = new Float32Array(P_MAX * 3);
 pGeo.setAttribute("position", new THREE.BufferAttribute(pPos, 3));
 pGeo.setAttribute("color", new THREE.BufferAttribute(pCol, 3));
 const particleTex = canvasTexture(64, 64, (ctx) => {
-  const g = ctx.createRadialGradient(32, 32, 2, 32, 32, 30);
+  /* 4-point sparkle star: bright core + thin rays, hard transparent edges
+     (a soft white disc reads as a glitchy blob on screen) */
+  ctx.clearRect(0, 0, 64, 64);
+  ctx.fillStyle = "rgba(255,255,255,1)";
+  const cx = 32, cy = 32;
+  ctx.beginPath();
+  ctx.moveTo(cx, 2);
+  ctx.quadraticCurveTo(cx + 3, cy - 8, cx + 8, cy - 8);
+  ctx.quadraticCurveTo(cx + 3, cy - 3, cx + 30, cy);
+  ctx.quadraticCurveTo(cx + 3, cy + 3, cx + 8, cy + 8);
+  ctx.quadraticCurveTo(cx + 3, cy + 8, cx, cy + 30);
+  ctx.quadraticCurveTo(cx - 3, cy + 8, cx - 8, cy + 8);
+  ctx.quadraticCurveTo(cx - 3, cy + 3, cx - 30, cy);
+  ctx.quadraticCurveTo(cx - 3, cy - 3, cx - 8, cy - 8);
+  ctx.quadraticCurveTo(cx - 3, cy - 8, cx, 2);
+  ctx.fill();
+  const g = ctx.createRadialGradient(cx, cy, 1, cx, cy, 12);
   g.addColorStop(0, "rgba(255,255,255,1)");
-  g.addColorStop(0.5, "rgba(255,255,255,0.85)");
   g.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 64, 64);
 });
-const pMat = new THREE.PointsMaterial({ size: 0.32, map: particleTex, vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false });
+const pMat = new THREE.PointsMaterial({ size: 0.24, map: particleTex, vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending });
 const points = new THREE.Points(pGeo, pMat);
 points.frustumCulled = false;
 scene.add(points);
@@ -909,8 +951,10 @@ function updateParticles(dt) {
     p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
     if (p.y < 0.05) { p.y = 0.05; p.vy *= -0.3; }
     pPos[i * 3] = p.x; pPos[i * 3 + 1] = p.y; pPos[i * 3 + 2] = p.z;
+    /* additive blending: fade color to black so dying sparkles vanish
+       (a brightness floor turns them into grey blobs) */
     const f = p.life / p.max;
-    pCol[i * 3] = p.r * f + 0.15; pCol[i * 3 + 1] = p.g * f + 0.15; pCol[i * 3 + 2] = p.b * f + 0.15;
+    pCol[i * 3] = p.r * f; pCol[i * 3 + 1] = p.g * f; pCol[i * 3 + 2] = p.b * f;
   }
   pGeo.attributes.position.needsUpdate = true;
   pGeo.attributes.color.needsUpdate = true;
@@ -1005,13 +1049,29 @@ function resetEntities() {
   patternCount = 0;
 }
 
-/* ---------------- audio: tiny synth, no assets ---------------- */
-let audioCtx = null, muted = false;
+/* ---------------- audio: tiny synth + chiptune loop, no assets ---------------- */
+let audioCtx = null, masterGain = null, musicGain = null, sfxGain = null, noiseBuf = null;
+let muted = false;
 function ensureAudio() {
   if (!audioCtx) {
-    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { /* no audio */ }
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = audioCtx.createGain();
+      musicGain = audioCtx.createGain(); musicGain.gain.value = 0.5;
+      sfxGain = audioCtx.createGain(); sfxGain.gain.value = 0.9;
+      musicGain.connect(masterGain); sfxGain.connect(masterGain);
+      masterGain.connect(audioCtx.destination);
+      masterGain.gain.value = muted ? 0 : 1;
+      noiseBuf = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * 0.05), audioCtx.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    } catch (e) { /* no audio */ }
   }
   if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+}
+function setMuted(m) {
+  muted = m;
+  if (audioCtx && masterGain) masterGain.gain.setValueAtTime(muted ? 0 : 1, audioCtx.currentTime);
 }
 function blip(freqA, freqB, dur, type, vol) {
   if (!audioCtx || muted) return;
@@ -1022,16 +1082,80 @@ function blip(freqA, freqB, dur, type, vol) {
   o.frequency.exponentialRampToValueAtTime(Math.max(40, freqB), t + dur);
   g.gain.setValueAtTime(vol || 0.12, t);
   g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  o.connect(g).connect(audioCtx.destination);
+  o.connect(g).connect(sfxGain);
   o.start(t); o.stop(t + dur + 0.02);
 }
 const sfx = {
   coin: () => { blip(988, 988, 0.07, "sine", 0.1); setTimeout(() => blip(1319, 1319, 0.12, "sine", 0.1), 60); },
   jump: () => blip(300, 700, 0.16, "sine", 0.08),
   slide: () => blip(500, 220, 0.14, "triangle", 0.07),
+  swoosh: () => blip(1400, 320, 0.12, "triangle", 0.06),
   crash: () => { blip(160, 40, 0.4, "sawtooth", 0.16); blip(90, 35, 0.5, "sine", 0.2); },
   click: () => blip(700, 900, 0.06, "sine", 0.08),
 };
+
+/* chiptune loop: 128 BPM, 32 eighth-note steps (Am - F - C - G), 7.5 s.
+   Same note tables as the offline video mix (render-audio.mjs) — keep in sync. */
+const MUSIC_BPM = 128, STEP_DUR = 60 / MUSIC_BPM / 2, MUSIC_STEPS = 32;
+const BASS_LINE = [45, 45, 45, 45, 45, 45, 57, 45, 41, 41, 41, 41, 41, 41, 53, 41,
+                   48, 48, 48, 48, 48, 48, 60, 48, 43, 43, 43, 43, 43, 43, 55, 43];
+const LEAD_LINE = [69, 0, 72, 0, 76, 0, 74, 72, 69, 0, 72, 0, 74, 0, 72, 0,
+                   76, 0, 74, 72, 74, 0, 69, 0, 72, 0, 74, 0, 76, 79, 81, 0];
+const KICK_STEPS = [0, 4, 8, 12, 16, 20, 24, 28];
+const HAT_STEPS = [2, 6, 10, 14, 18, 22, 26, 30];
+let musicTimer = null, musicStep = 0, nextStepTime = 0;
+function midiFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+function noteAt(midi, t, dur, type, vol) {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(midiFreq(midi), t);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(musicGain);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+function kickAt(t) {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = "sine";
+  o.frequency.setValueAtTime(150, t);
+  o.frequency.exponentialRampToValueAtTime(45, t + 0.11);
+  g.gain.setValueAtTime(0.5, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+  o.connect(g).connect(musicGain);
+  o.start(t); o.stop(t + 0.15);
+}
+function hatAt(t) {
+  const s = audioCtx.createBufferSource(); s.buffer = noiseBuf;
+  const f = audioCtx.createBiquadFilter(); f.type = "highpass"; f.frequency.value = 6000;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.09, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+  s.connect(f).connect(g).connect(musicGain);
+  s.start(t); s.stop(t + 0.06);
+}
+function scheduleStep(step, t) {
+  const b = BASS_LINE[step], l = LEAD_LINE[step];
+  if (b) noteAt(b, t, 0.21, "square", 0.13);
+  if (l) noteAt(l, t, 0.22, "square", 0.06);
+  if (KICK_STEPS.includes(step)) kickAt(t);
+  if (HAT_STEPS.includes(step)) hatAt(t);
+}
+function musicStart() {
+  if (!audioCtx || musicTimer) return;
+  musicStep = 0;
+  nextStepTime = audioCtx.currentTime + 0.05;
+  musicTimer = setInterval(() => {
+    if (!audioCtx) return;
+    while (nextStepTime < audioCtx.currentTime + 0.15) {
+      scheduleStep(musicStep, nextStepTime);
+      musicStep = (musicStep + 1) % MUSIC_STEPS;
+      nextStepTime += STEP_DUR;
+    }
+  }, 40);
+}
+function musicStop() {
+  if (musicTimer) { clearInterval(musicTimer); musicTimer = null; }
+}
 
 /* ---------------- game state ---------------- */
 const game = {
@@ -1040,8 +1164,9 @@ const game = {
   sliding: false, slideTimer: 0,
   speed: 0, distance: 0, score: 0, coins: 0, mult: 1,
   runPhase: 0, time: 0, shake: 0, best: 0,
-  laneChangeT: 0,
+  laneChangeT: 0, events: [],
 };
+function logEvent(type) { game.events.push({ t: +game.time.toFixed(3), type }); }
 try { game.best = parseInt(localStorage.getItem("sunset-courier-best") || "0", 10) || 0; } catch (e) { /* private mode */ }
 
 /* ---------------- HUD ---------------- */
@@ -1085,11 +1210,11 @@ function coinPop() {
 /* ---------------- input ---------------- */
 function doLeft() {
   if (game.state !== "playing") return;
-  if (game.lane > 0) { game.lane--; game.laneChangeT = 1; }
+  if (game.lane > 0) { game.lane--; game.laneChangeT = 1; sfx.swoosh(); logEvent("lane"); }
 }
 function doRight() {
   if (game.state !== "playing") return;
-  if (game.lane < 2) { game.lane++; game.laneChangeT = 1; }
+  if (game.lane < 2) { game.lane++; game.laneChangeT = 1; sfx.swoosh(); logEvent("lane"); }
 }
 function doJump() {
   if (game.state !== "playing") return;
@@ -1098,12 +1223,13 @@ function doJump() {
     game.vy = JUMP_V;
     game.grounded = false;
     sfx.jump();
+    logEvent("jump");
   }
 }
 function doSlide() {
   if (game.state !== "playing") return;
   if (!game.grounded) { game.vy = Math.min(game.vy, -22); return; } /* slam down */
-  if (!game.sliding) { game.sliding = true; game.slideTimer = SLIDE_TIME; sfx.slide(); }
+  if (!game.sliding) { game.sliding = true; game.slideTimer = SLIDE_TIME; sfx.slide(); logEvent("slide"); }
   else game.slideTimer = SLIDE_TIME;
 }
 addEventListener("keydown", (e) => {
@@ -1138,7 +1264,8 @@ document.getElementById("btn-play").addEventListener("click", () => { ensureAudi
 document.getElementById("btn-retry").addEventListener("click", () => { ensureAudio(); sfx.click(); startGame(); });
 document.getElementById("btn-pause").addEventListener("click", () => { ensureAudio(); togglePause(); });
 document.getElementById("btn-mute").addEventListener("click", (e) => {
-  muted = !muted;
+  ensureAudio();
+  setMuted(!muted);
   e.target.textContent = muted ? "✕" : "♪";
 });
 
@@ -1149,6 +1276,7 @@ function startGame() {
     state: "playing", lane: 1, x: 0, y: 0, vy: 0, grounded: true,
     sliding: false, slideTimer: 0, speed: BASE_SPEED, distance: 0,
     score: 0, coins: 0, mult: 1, runPhase: 0, time: 0, shake: 0, laneChangeT: 0,
+    events: [],
   });
   runner.rotation.set(0, 0, 0);
   runner.position.set(0, 0, 0);
@@ -1158,15 +1286,18 @@ function startGame() {
   el.hint.style.opacity = "1";
   hintTimer = 6;
   updateHUD();
+  musicStart();
 }
 function togglePause() {
-  if (game.state === "playing") { game.state = "paused"; el.hint.style.opacity = "1"; el.hint.innerHTML = "PAUSED — press P to resume"; }
-  else if (game.state === "paused") { game.state = "playing"; el.hint.innerHTML = "<span class=\"key\">◀ ▶</span> switch lane &nbsp; <span class=\"key\">▲ / SPACE</span> jump &nbsp; <span class=\"key\">▼</span> slide"; }
+  if (game.state === "playing") { game.state = "paused"; el.hint.style.opacity = "1"; el.hint.innerHTML = "PAUSED — press P to resume"; if (audioCtx) audioCtx.suspend(); }
+  else if (game.state === "paused") { game.state = "playing"; el.hint.innerHTML = "<span class=\"key\">◀ ▶</span> switch lane &nbsp; <span class=\"key\">▲ / SPACE</span> jump &nbsp; <span class=\"key\">▼</span> slide"; if (audioCtx) audioCtx.resume(); }
 }
 function crash() {
   game.state = "over";
   game.shake = 0.7;
+  musicStop();
   sfx.crash();
+  logEvent("crash");
   el.flash.style.opacity = "0.45";
   setTimeout(() => { el.flash.style.opacity = "0"; }, 160);
   burst(game.x, 1.2, 0, 0xff3d3d, 40, 4, 6);
@@ -1439,6 +1570,7 @@ function step(dt) {
         g.score += 10 * g.mult;
         burst(c.mesh.position.x, c.y, 0, 0xffd23d, 12, 2, 3);
         sfx.coin();
+        logEvent("coin");
         coinPop();
       }
     }
@@ -1514,6 +1646,8 @@ window.__game = {
     frames: frameCount,
   }),
   input: { left: doLeft, right: doRight, jump: doJump, slide: doSlide },
+  events: () => game.events.slice(),
+  audio: () => ({ ctx: !!audioCtx, state: audioCtx ? audioCtx.state : "none", music: !!musicTimer, muted }),
   demo: DEMO_MODE,
 };
 
