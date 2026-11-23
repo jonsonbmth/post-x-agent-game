@@ -13,28 +13,32 @@ this repository hands in that post's address.
 
 ## The one prompt
 
-> "Build a tiny 3D browser game: Sunset Courier — a courier on a glowing
-> hover-scooter races down a neon sunset boulevard, steering between traffic
-> barriers, collecting golden parcels, with palm trees, a big low sun, and a
-> live score HUD. Controls: arrows/WASD to steer, Space to jump."
+> "Build a tiny 3D browser game: Sunset Courier — a kid courier sprints down
+> sunny train tracks, dodging colorful trains, jumping barriers, grabbing
+> coins. Subway Surfers style. Arrows steer, Space jumps, Down slides."
 
 ## The game
 
-Open `game.html` in a browser (it loads three.js from a CDN) and ride:
+Open `game.html` in a browser (it loads three.js from `vendor/three.min.js`,
+vendored locally — the game makes zero network requests) and run:
 
 - **Arrows / WASD** — switch lanes
 - **Space / Up** — jump the barriers
-- **R** — restart after a wipeout
+- **Down / S** — slide under the overhead bars
+- **P / Esc** — pause, **R** — restart after a wipeout
+- **Swipe** — works on touch screens
 
-Steer the courier down the boulevard, dodge the red barriers, grab the golden
-parcels to build a combo, and watch the score climb as the scooter gets
-faster. Three hits and the run ends. `?auto=1` lets the courier ride itself
-(handy for watching), `?seed=N` fixes the road layout, and `?noshadow=1`
-turns shadows off for slow machines.
+Sprint the three sunny tracks as the kid courier: dodge the big colorful
+trains, jump the striped barriers, slide under the gantry bars, and grab the
+spinning gold coins to raise your multiplier. One hit ends the run, and the
+tracks get faster the longer you survive. `?demo=1` lets the courier run
+itself (handy for watching), `?seed=N` fixes the track layout, `?step=1`
+drives the game one fixed step at a time for capture, and `?noshadow=1` /
+`?noaa=1` turn shadows / antialiasing off for slow machines.
 
 ## The video
 
-The entry is the X post itself: a ~37-second vertical video — the prompt on
+The entry is the X post itself: a ~33-second vertical video — the prompt on
 screen, the agent working, the finished game actually running (real gameplay
 captured headless, no staged screenshots), a call to come build on
 [make.fun](https://make.fun), and make.fun's referral end card last. The video
